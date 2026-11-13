@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 / STM32 Firmware Debugging — root cause first, then the fix</title>
+<meta name="description" content="Embedded firmware debugging for ESP32 and STM32. I find why your board resets, why an ADC reads zero on Wi-Fi, or why a servo browns out the rail. Fixed price, source included.">
+<meta name="keywords" content="ESP32 debugging, STM32 firmware, brownout reset, ADC2 WiFi, servo power, embedded freelance">
+<link rel="canonical" href="https://ljn66666.github.io/">
+<meta property="og:title" content="ESP32 / STM32 Firmware Debugging">
+<meta property="og:description" content="I find why your board resets before you pay. ESP32, ESP32-S3, STM32F1/F4.">
+<meta property="og:type" content="website">
+<style>
+  :root{
+    --bg:#fafbfc; --card:#fff; --ink:#12151c; --sub:#5f6673; --line:#e6e9ee;
+    --accent:#1d4ed8; --accent-soft:#eef2ff; --warm:#b42318; --warm-soft:#fef3f2;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0d1016; --card:#141821; --ink:#eef1f6; --sub:#98a0ae; --line:#232936;
+           --accent:#7aa2ff; --accent-soft:#182238; --warm:#ff6b5e; --warm-soft:#2a1a19; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px}
+  section{padding:36px 0;border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:0}
+
+  header{padding:56px 0 36px;border-bottom:1px solid var(--line)}
+  .kicker{font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+          color:var(--accent);margin-bottom:18px}
+  h1{font-size:clamp(28px,5vw,40px);line-height:1.18;letter-spacing:-.02em;margin:0 0 16px;font-weight:700}
+  .lede{font-size:clamp(16px,2.2vw,18px);color:var(--sub);margin:0 0 26px;max-width:560px}
+  .cta{display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#fff;
+       text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px;font-size:15px}
+  .cta:hover{opacity:.92}
+  .meta-line{margin-top:16px;font-size:13.5px;color:var(--sub)}
+
+  h2{font-size:20px;margin:0 0 6px;letter-spacing:-.01em;font-weight:650}
+  .sec-sub{color:var(--sub);font-size:14.5px;margin:0 0 22px}
+
+  .case{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:18px 20px;margin-bottom:12px}
+  .case .sym{font-family:var(--mono);font-size:13px;color:var(--warm);font-weight:600;margin-bottom:6px}
+  .case .fix{font-size:14.5px;color:var(--sub);margin-top:8px}
+  .case .fix b{color:var(--ink);font-weight:600}
+
+  .tool{display:block;background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:18px 20px;margin-bottom:12px;text-decoration:none;color:inherit}
+  .tool:hover{border-color:var(--accent)}
+  .tool .name{font-weight:650;font-family:var(--mono);font-size:14.5px;color:var(--accent)}
+  .tool .desc{font-size:14.5px;color:var(--sub);margin-top:6px}
+
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin-top:6px}
+  th,td{text-align:left;padding:11px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);font-weight:600}
+  td:last-child{font-family:var(--mono);white-space:nowrap;font-weight:600}
+
+  .note{background:var(--accent-soft);border-radius:10px;padding:14px 16px;font-size:14px;margin-top:18px}
+  .warn{background:var(--warm-soft);border-radius:10px;padding:14px 16px;font-size:14px;margin-top:12px}
+
+  footer{padding:32px 0 56px;font-size:13.5px;color:var(--sub)}
+  a{color:var(--accent)}
+  code{font-family:var(--mono);font-size:.92em;background:var(--accent-soft);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="kicker">Embedded firmware · ESP32 / STM32</div>
+  <h1>Your board resets.<br>The cause is usually not your code.</h1>
+  <p class="lede">
+    I debug ESP32, ESP32-S3, STM32F1 and STM32F4 at the driver level.
+    Most failures I get called for are power, grounding or pin-mux problems
+    wearing a software disguise.
+  </p>
+  <a class="cta" href="mailto:3049324784@qq.com?subject=Firmware%20debugging%20request">Describe your problem →</a>
+  <div class="meta-line">I tell you the likely root cause before you pay anything. If I cannot explain it, I do not take the job.</div>
+</header>
+
+<section>
+  <h2>Three failures I have actually hit</h2>
+  <p class="sec-sub">On real hardware, not from a tutorial.</p>
+
+  <div class="case">
+    <div class="sym">Board reboots every time the servos move</div>
+    Four SG90s starting together pulled roughly 900 mA from the board's USB rail.
+    The rail sagged below the brownout threshold and the chip reset.
+    <div class="fix"><b>Fix:</b> separate 5 V supply, common ground, 470 µF at the servo
+      rail, and sequential moves with a 150 ms gap. No firmware change alone would ever fix it.</div>
+  </div>
+
+  <div class="case">
+    <div class="sym">Analog input reads 0 as soon as Wi-Fi connects</div>
+    The pin was on ADC2, which shares hardware with the radio on ESP32. While Wi-Fi
+    is running, ADC2 returns invalid values and raises no error at all.
+    <div class="fix"><b>Fix:</b> move the input to an ADC1 pin. Code review will never find this.</div>
+  </div>
+
+  <div class="case">
+    <div class="sym">Servos twitch with nothing in the code</div>
+    A timer channel conflict between the servo library and the LEDC channel driving a buzzer.
+    <div class="fix"><b>Fix:</b> reassign the LEDC channel and verify the timer group in use.</div>
+  </div>
+</section>
+
+<section>
+  <h2>Open-source tooling</h2>
+  <p class="sec-sub">Read the code before you decide anything.</p>
+
+  <a class="tool" href="https://github.com/ljn66666/esp32-serial-scope" rel="noopener">
+    <div class="name">esp32-serial-scope</div>
+    <div class="desc">Turns serial <code>key:value</code> output into live terminal charts.
+      Survives truncated UART lines that kill most plotters. 13 unit tests over the parser.</div>
+  </a>
+
+  <a class="tool" href="https://github.com/ljn66666/emb-ai-kit" rel="noopener">
+    <div class="name">emb-ai-kit</div>
+    <div class="desc">Scaffolding to connect ESP32 / STM32 to LLMs and MCP servers,
+      written from real hardware bring-up rather than documentation.</div>
+  </a>
+</section>
+
+<section>
+  <h2>What I take on</h2>
+  <p class="sec-sub">Fixed price. Full source. The root cause explained, not just "try this".</p>
+
+  <table>
+    <tr><th>Scope</th><th>What you get</th><th>Price</th></tr>
+    <tr>
+      <td>Root-cause report</td>
+      <td>One problem diagnosed in writing: symptom, cause, and the evidence that proves it</td>
+      <td>$45</td>
+    </tr>
+    <tr>
+      <td>Diagnosed and fixed</td>
+      <td>The report plus a working firmware build for your board, full source</td>
+      <td>$95</td>
+    </tr>
+    <tr>
+      <td>Full bring-up</td>
+      <td>Above plus power and wiring review, 30-minute call, 7 days of follow-up</td>
+      <td>$180</td>
+    </tr>
+  </table>
+
+  <div class="note">
+    <b>What I need from you:</b> the board and chip, what it does wrong and when,
+    the serial log around the failure including the boot message with the reset reason,
+    a photo of the wiring, and what the servos or motors are powered from.
+  </div>
+
+  <div class="warn">
+    <b>What I do not do:</b> academic assignments, coursework, or degree theses —
+    in any language, from any country. Please do not ask.
+  </div>
+</section>
+
+<section lang="zh-CN">
+  <h2>中文</h2>
+  <p class="sec-sub">同样的服务，中文沟通。</p>
+  <p style="font-size:15px">
+    专做 ESP32 / ESP32-S3 / STM32 的固件排错。多数「代码没问题但板子不工作」的情况，
+    根因在供电、接地或引脚复用，不在代码里。
+  </p>
+  <table>
+    <tr><th>范围</th><th>交付</th><th>价格</th></tr>
+    <tr><td>远程诊断</td><td>书面根因分析：现象、原因、证明它的证据</td><td>¥150</td></tr>
+    <tr><td>诊断 + 修复</td><td>根因报告 + 能在你板子上跑的固件，含源码</td><td>¥300</td></tr>
+    <tr><td>完整排查</td><td>以上 + 供电与接线整改方案 + 30 分钟通话 + 7 天售后</td><td>¥800</td></tr>
+  </table>
+  <p style="font-size:14.5px;color:var(--sub);margin-top:16px">
+    先给判断，再谈钱。解释不了的原因，我不接。
+  </p>
+</section>
+
+<footer>
+  <p>
+    <a href="mailto:3049324784@qq.com">3049324784@qq.com</a> ·
+    <a href="https://github.com/ljn66666" rel="noopener">github.com/ljn66666</a>
+  </p>
+  <p>Built and maintained by one person. No agency, no account manager.</p>
+</footer>
+
+</div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "ProfessionalService",
+  "name": "Embedded Firmware Debugging",
+  "description": "ESP32 / ESP32-S3 / STM32 firmware debugging. Root-cause analysis for brownout resets, ADC2/Wi-Fi conflicts, and peripheral power faults.",
+  "url": "https://ljn66666.github.io/",
+  "email": "3049324784@qq.com",
+  "areaServed": "Worldwide",
+  "knowsAbout": ["ESP32","STM32","Embedded C","Firmware debugging","Power supply design","UART","I2C","PWM"],
+  "founder": { "@type": "Person", "name": "ljn66666", "url": "https://github.com/ljn66666" }
+}
+</script>
+
+</body>
+</html>
